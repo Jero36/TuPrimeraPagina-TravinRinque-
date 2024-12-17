@@ -1,0 +1,257 @@
+# Estructura del proyecto:
+# blog_project/
+#   ├── manage.py
+#   ├── blog_project/
+#   │   ├── __init__.py
+#   │   ├── settings.py
+#   │   ├── urls.py
+#   │   └── wsgi.py
+#   └── blog/
+#       ├── __init__.py
+#       ├── models.py
+#       ├── views.py
+#       ├── forms.py
+#       ├── urls.py
+#       └── templates/
+#           ├── base.html
+#           ├── blog_list.html
+#           ├── blog_create.html
+#           └── blog_search.html
+
+# blog/models.py
+from django.db import models
+from django.contrib.auth.models import User
+from django.urls import reverse
+
+class Autor(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    bio = models.TextField(max_length=500, blank=True)
+    fecha_nacimiento = models.DateField(null=True, blank=True)
+
+    def __str__(self):
+        return self.user.username
+
+class Entrada(models.Model):
+    CATEGORIAS = [
+        ('tecnologia', 'Tecnología'),
+        ('viajes', 'Viajes'),
+        ('personal', 'Blog Personal'),
+        ('otros', 'Otros')
+    ]
+
+    titulo = models.CharField(max_length=200)
+    contenido = models.TextField()
+    fecha_publicacion = models.DateTimeField(auto_now_add=True)
+    autor = models.ForeignKey(Autor, on_delete=models.CASCADE)
+    categoria = models.CharField(max_length=20, choices=CATEGORIAS, default='otros')
+
+    def __str__(self):
+        return self.titulo
+
+    def get_absolute_url(self):
+        return reverse('entrada-detalle', kwargs={'pk': self.pk})
+
+class Comentario(models.Model):
+    entrada = models.ForeignKey(Entrada, on_delete=models.CASCADE, related_name='comentarios')
+    autor = models.CharField(max_length=100)
+    texto = models.TextField()
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'Comentario de {self.autor} en {self.entrada.titulo}'
+
+# blog/forms.py
+from django import forms
+from .models import Entrada, Autor, Comentario
+
+class EntradaForm(forms.ModelForm):
+    class Meta:
+        model = Entrada
+        fields = ['titulo', 'contenido', 'categoria']
+
+class AutorForm(forms.ModelForm):
+    class Meta:
+        model = Autor
+        fields = ['bio', 'fecha_nacimiento']
+
+class ComentarioForm(forms.ModelForm):
+    class Meta:
+        model = Comentario
+        fields = ['autor', 'texto']
+
+class BusquedaEntradaForm(forms.Form):
+    termino = forms.CharField(
+        label='Buscar Entradas',
+        max_length=100,
+        required=False
+    )
+    categoria = forms.ChoiceField(
+        choices=[('', 'Todas')] + Entrada.CATEGORIAS,
+        required=False
+    )
+
+# blog/views.py
+from django.shortcuts import render, redirect
+from django.views.generic import ListView, CreateView, DetailView
+from .models import Entrada, Autor
+from .forms import EntradaForm, AutorForm, BusquedaEntradaForm
+from django.db.models import Q
+
+class EntradaListView(ListView):
+    model = Entrada
+    template_name = 'blog/blog_list.html'
+    context_object_name = 'entradas'
+    ordering = ['-fecha_publicacion']
+
+class EntradaCreateView(CreateView):
+    model = Entrada
+    form_class = EntradaForm
+    template_name = 'blog/blog_create.html'
+
+    def form_valid(self, form):
+        # Aquí deberías añadir lógica para asignar el autor actual
+        return super().form_valid(form)
+
+def buscar_entradas(request):
+    form = BusquedaEntradaForm(request.GET or None)
+    entradas = Entrada.objects.all()
+
+    if form.is_valid():
+        termino = form.cleaned_data.get('termino')
+        categoria = form.cleaned_data.get('categoria')
+
+        if termino:
+            entradas = entradas.filter(
+                Q(titulo__icontains=termino) |
+                Q(contenido__icontains=termino)
+            )
+
+        if categoria:
+            entradas = entradas.filter(categoria=categoria)
+
+    context = {
+        'form': form,
+        'entradas': entradas
+    }
+    return render(request, 'blog/blog_search.html', context)
+
+# blog/urls.py
+from django.urls import path
+from .views import EntradaListView, EntradaCreateView, buscar_entradas
+
+urlpatterns = [
+    path('', EntradaListView.as_view(), name='blog-inicio'),
+    path('nueva-entrada/', EntradaCreateView.as_view(), name='entrada-crear'),
+    path('buscar/', buscar_entradas, name='entrada-buscar'),
+]
+
+# blog_project/urls.py
+from django.contrib import admin
+from django.urls import path, include
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('', include('blog.urls')),
+]
+
+# templates/base.html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{% block titulo %}Mi Blog{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand" href="{% url 'blog-inicio' %}">Mi Blog</a>
+            <div class="navbar-nav">
+                <a class="nav-item nav-link" href="{% url 'blog-inicio' %}">Inicio</a>
+                <a class="nav-item nav-link" href="{% url 'entrada-crear' %}">Nueva Entrada</a>
+                <a class="nav-item nav-link" href="{% url 'entrada-buscar' %}">Buscar</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% block contenido %}
+        {% endblock %}
+    </div>
+</body>
+</html>
+
+# templates/blog/blog_list.html
+{% extends 'base.html' %}
+
+{% block titulo %}Entradas del Blog{% endblock %}
+
+{% block contenido %}
+    <h1>Últimas Entradas</h1>
+    {% for entrada in entradas %}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">{{ entrada.titulo }}</h5>
+                <h6 class="card-subtitle mb-2 text-muted">{{ entrada.autor.user.username }} - {{ entrada.fecha_publicacion }}</h6>
+                <p class="card-text">{{ entrada.contenido|truncatewords:30 }}</p>
+                <span class="badge bg-info">{{ entrada.get_categoria_display }}</span>
+            </div>
+        </div>
+    {% endfor %}
+{% endblock %}
+
+# templates/blog/blog_create.html
+{% extends 'base.html' %}
+
+{% block titulo %}Nueva Entrada{% endblock %}
+
+{% block contenido %}
+    <h1>Crear Nueva Entrada</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="btn btn-primary">Guardar Entrada</button>
+    </form>
+{% endblock %}
+
+# templates/blog/blog_search.html
+{% extends 'base.html' %}
+
+{% block titulo %}Buscar Entradas{% endblock %}
+
+{% block contenido %}
+    <h1>Buscar Entradas</h1>
+    <form method="get">
+        {{ form.as_p }}
+        <button type="submit" class="btn btn-primary">Buscar</button>
+    </form>
+
+    <h2>Resultados</h2>
+    {% for entrada in entradas %}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">{{ entrada.titulo }}</h5>
+                <p class="card-text">{{ entrada.contenido|truncatewords:30 }}</p>
+            </div>
+        </div>
+    {% endfor %}
+{% endblock %}
+
+# README.md
+# Blog Project
+
+## Configuración del Proyecto
+
+1. Clonar repositorio
+2. Crear entorno virtual
+3. Instalar dependencias: `pip install django`
+4. Migrar base de datos:
+   - `python manage.py makemigrations`
+   - `python manage.py migrate`
+5. Crear superusuario: `python manage.py createsuperuser`
+6. Ejecutar servidor: `python manage.py runserver`
+
+## Funcionalidades
+- Listado de entradas de blog
+- Crear nuevas entradas
+- Búsqueda de entradas por título o contenido
+- Filtrado por categorías
